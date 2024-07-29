@@ -1,0 +1,165 @@
+###################### Setting up the Simulation
+
+boundary p p p 	# we have periodic boundaries in all three dimensions
+units real 	# this units style uses Angstroms for distance and femtoseconds for time, etc...
+atom_style full 	# the full atom style includes properties for bonds/bond angles/dihedrals/impropers/charge, etc...
+pair_style hybrid morse 8.0 lj/cut 10.0 sw 	# since I am using three different types of pair styles, I declare a hybrid pair style and include the types of potentials I want and their cutoffs (in Angstroms)
+pair_modify pair lj/cut shift yes
+pair_modify pair morse shift yes
+pair_modify pair sw shift yes
+
+region box block -20 20 -20 20 -265 265 	# I set up a simulation box with 40-Angstrom wide sides and a height of 530 Angstroms
+create_box 3 box 	# we are putting four different types of atoms in this simulation
+
+include PARMmorse.lammps	# we have to include the file that stores the masses and potential interaction parameters
+
+#################### Defining Regions
+
+region slab block -19.5 19.5 -19.5 19.5 -240 -210 	# this is the bottom slab that is 30 A thick (33 with the functionalized layer)
+region topslab block -19.5 19.5 -19.5 19.5 210 240 	# this is the top slab that will by hydrophilic during the evaporation. It is also 33 Angstroms thick
+region deposttop block -19.5 19.5 -19.5 19.5 -210 -207 # this is the 3 Angstrom functionalized layer on the bottom slab
+region topdepost block -19.5 19.5 -19.5 19.5 207 210	# this is the functionalized hydrophilic layer on the top slab
+region bottom block -19.5 19.5 -19.5 19.5 -240 -235 	# this is the fixed (not time integrated) portion of the bottom of the block
+region top block -19.5 19.5 -19.5 19.5 235 240
+region heated block -19.5 19.5 -19.5 19.5 -237 -234	# heat bath
+region cooled block -19.5 19.5 -19.5 19.5 234 237 	# room temp top block
+region myblock block -19.5 19.5 -19.5 19.5 -207 207 # water slab
+region bottom_fixed block -19.5 19.5 -19.5 19.5 -240 -237 	#bottom fixed layer
+region top_fixed block -19.5 19.5 -19.5 19.5 237 240 	#top fixed layer
+
+
+
+##################### Adding in Gold Atoms (Type 1) and Hydrophobic/philic Atoms (Types 3/4 respectively)
+
+lattice fcc 4.07	# this is a lattice constant for the gold fcc lattice
+create_atoms 1 region slab	# this command sets gold atoms (type 1 in the parameter file) in the bottom slab region
+create_atoms 1 region topslab 	# this command sets gold atoms (type 1) in the top slab region
+create_atoms 3 region deposttop 	# I deposit type 3 (hydrophilic) atoms in the bottom slab's functional region in the same fcc lattice as the gold
+create_atoms 3 region topdepost 	# I add a hydrophilic monolayer to the top of the block
+delete_atoms overlap 0.05 all all 	# I delete all overlapping atoms
+reset_atom_ids 	# this is necessary to then impart velocities on all atoms later
+
+#################### Defining Groups
+
+group gH20 type 2	# after deleting atoms, I re-check how many atoms are in each group (will print out in logfile)
+group philic type 3 	# there are groups of hydrophilic atoms on the top and bottom slabs, so I need to specify which is which in my groups with the next two lines
+group topphilic region topdepost
+group hydrophilic subtract philic topphilic 	# to get the hydrophilic atoms only on the bottom slab, I subtract from the group of all hydrophilic atoms those which are on the top
+group goldslab region slab
+group bottomslab union goldslab hydrophilic 	# the atoms considered part of the bottom slab are a union of the functional layers and the gold slab on the bottom
+group bottom region bottom
+group top region top
+group water region myblock
+
+
+
+############# Adding in Water Molecules
+
+#region mysphere sphere 0 0 -207 100
+#region myblock block -200 200 -200 200 -265 -207 side out
+#region rliquid intersect 2 mysphere myblock
+#region noliquid intersect 2 mysphere myblock side out
+#region vapor intersect 2 box noliquid
+
+lattice sc 3.1
+create_atoms 2 region myblock
+#create_atoms 2 random 19 33445 vapor
+delete_atoms overlap 0.05 all all
+reset_atom_ids
+
+#################### Reprinting Groups after Deleting/Adding Atoms
+
+group gH20 type 2 # after deleting overlapping atoms and creating water molecules, I again print out how many atoms are in each group
+group philic type 3
+group philictop region topdepost
+group hydrophilic subtract philic philictop
+group goldslab region slab
+group bottomslab union hydrophilic goldslab
+group top region top_fixed
+group fixed region bottom_fixed
+group fixed union top
+group hot region heated
+group cold region cooled
+
+
+##################### Printing Out Thermodynamics
+
+thermo_style custom step elapsed time atoms angles temp press pe etotal vol density # This specifies what thermodynamic data prints out in the log file with each timestep. Useful to look at, but can't be analyzed from this file
+thermo 1 	# I want to print out thermodynamic info every timestep
+
+#################### Balancing the system
+
+comm_style tiled
+balance 1.5 shift xyz 10 1.1
+
+################### Minimizing and outputting the data
+
+timestep 0.1
+min_style cg
+neigh_modify delay 0 every 1 check yes
+dump mydmp all atom 1000 dump.philicmin.lammpstrj
+variable dt equal 0.1
+timestep $(dt*10)
+minimize 1.0e-6 1.0e-8 1000 1000
+#write_data data.langevin.min03.lammps
+
+################### Defining Groups for Temperature/Integration Control 
+
+group pressurized subtract all fixed # this is what will be kept at 1 atmosphere
+neigh_modify delay 2 every 1 check yes
+undump mydmp
+dump mydmp2 all custom 100000 dump.philicequil.lammpstrj id type x y z vx vy vz fx fy fz
+
+timestep 1.0
+thermo_style custom step elapsed time atoms angles temp press pe etotal vol density
+variable p_enrgy equal pe
+variable k_enrgy equal ke
+variable t_elapsed equal elapsed
+variable tot_enrgy equal etotal
+variable temperature equal temp
+variable pressure equal press
+variable natoms equal atoms
+fix print_energy all print 50000 "${t_elapsed},${natoms},${temperature},${pressure},${k_enrgy},${p_enrgy},${tot_enrgy}" file totenrgyphilicequil.txt screen no
+
+# Define variables
+variable zmin equal -219
+variable zmax equal 219
+variable zbinwidth equal 3
+variable num_bins equal 146
+
+
+# Initial Velocities
+velocity all create 300 8008135 dist gaussian
+############# equilibirize nvt
+
+ 
+fix mynvt all nvt temp 260 260 10 
+run 500000
+
+
+############# equilibirize npt
+fix mynpt all npt temp 260 260 10 
+run 1000000
+
+############# run simulation nve
+fix mynve all nve
+fix immobilize fixed setforce 0.0 0.0 0.0 
+velocity fixed zero linear
+fix heater hot langevin 310 310 100 238472
+fix heatsink cold langevin 310 310 100 823273
+
+# Create bins along the z-axis
+compute zbins all chunk/atom bin/1d z lower ${zbinwidth} units box
+compute tbins all chunk/atom bin/1d z lower ${zbinwidth} units box
+ 
+fix ave_chunks all ave/chunk 100 10 500000 tbins temp file avg_temp.txt
+
+
+
+
+
+thermo 50000
+restart 50000 restart.philic.equil
+
+run 3000000
+write_data data.philiceinter.lammps

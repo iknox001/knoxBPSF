@@ -1,0 +1,12 @@
+mass 3 109.67 # setting the top layer mass to the same value as the 
+mass 2 18.015 # oxygen mass
+mass 1 109.67
+
+#hydrophilic type 3
+pair_coeff * * sw mW.sw NULL mW NULL
+pair_coeff 2 3 lj/cut 0.535 2.3925 # water hydrophilic
+pair_coeff 1 3 morse 8.763 1.47 2.65 # Gold hydrophilic, also from Dezhao's paper
+pair_coeff 1 1 morse 10.954 1.583 3.042 # taken from Dezhao's 2018 ACS AMI paper 
+pair_coeff 1 2 lj/cut 0.5 2.3925 4
+pair_coeff 3 3 morse 8.763 1.47 2.65
+
